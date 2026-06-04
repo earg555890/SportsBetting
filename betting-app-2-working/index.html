@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sports Stats & Analytics</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+
+<div style="max-width: 380px; margin: 0 auto; background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 12px; border: 0.5px solid var(--color-border-tertiary);">
+  <div id="phone" style="background: var(--color-background-primary); border-radius: 24px; border: 0.5px solid var(--color-border-tertiary); overflow: hidden; min-height: 720px; display: flex; flex-direction: column; position: relative;">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 18px 4px; font-size: 11px; color: var(--color-text-secondary);">
+      <span>9:41</span>
+      <span style="width: 14px; height: 8px; border: 1px solid var(--color-text-secondary); border-radius: 2px; display: inline-block; position: relative;"><span style="position: absolute; top: 0; left: 0; width: 70%; height: 100%; background: var(--color-text-secondary); border-radius: 1px;"></span></span>
+    </div>
+    <div id="status-banner" style="display: none;"></div>
+    <div id="app-header" style="padding: 10px 18px 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 0.5px solid var(--color-border-tertiary);">
+      <div>
+        <p id="header-title" style="margin: 0; font-size: 18px; font-weight: 500;">Overview</p>
+        <p id="header-sub" style="margin: 0; font-size: 12px; color: var(--color-text-secondary);">All sports</p>
+      </div>
+      <button id="sport-pill" style="height: 32px; padding: 0 12px; border-radius: 16px; font-size: 12px; display: flex; align-items: center; gap: 6px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); cursor: pointer;">
+        <span id="sport-pill-label">Overview</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+    <div id="sport-dropdown" style="display: none; padding: 10px 14px; border-bottom: 0.5px solid var(--color-border-tertiary); background: var(--color-background-secondary); max-height: 280px; overflow-y: auto;"></div>
+    <div id="content" style="flex: 1; overflow-y: auto; padding: 14px 16px 16px;"></div>
+    <div id="tab-bar" style="display: grid; grid-template-columns: repeat(5, 1fr); border-top: 0.5px solid var(--color-border-tertiary); padding: 6px 4px 8px;"></div>
+    <!-- AI-pick popup host: overlays the phone frame, lives outside #content so it
+         survives board re-renders (e.g. fake-live updates). Filled by renderAiModal(). -->
+    <div id="ai-modal-host"></div>
+  </div>
+  <p id="dev-controls" style="text-align: center; font-size: 11px; color: var(--color-text-tertiary); margin: 10px 0 4px; line-height:1.8;">
+    Dev:
+    <button id="toggle-fake-live" style="background: var(--color-background-info); color: var(--color-text-info); border: 0.5px solid var(--color-border-info); border-radius: 8px; padding: 2px 8px; font-size: 10px; cursor: pointer;">Fake live: ON</button>
+    <button id="simulate-failure" style="background: var(--color-background-warning); color: var(--color-text-warning); border: 0.5px solid var(--color-border-tertiary); border-radius: 8px; padding: 2px 8px; font-size: 10px; cursor: pointer; margin-left:4px;">Simulate API failure</button>
+    <button id="toggle-espn" style="background: var(--color-background-success); color: var(--color-text-success); border: 0.5px solid var(--color-border-tertiary); border-radius: 8px; padding: 2px 8px; font-size: 10px; cursor: pointer; margin-left:4px;">Try real ESPN data: OFF</button>
+  </p>
+  <p id="espn-status" style="text-align:center; font-size:10px; color:var(--color-text-tertiary); margin: 0;"></p>
+</div>
+
+<!-- =========================================================================
+     SCRIPT LOAD ORDER MATTERS
+     Each script defines functions/variables at global scope, and later
+     scripts depend on earlier ones. This is plain script tags (not ES modules)
+     so the file can be opened by double-clicking — no local server needed.
+
+     Dependency layers:
+       1. config + data         (no deps)
+       2. datasource            (uses data)
+       3. state                 (uses datasource)
+       4. helpers               (uses state)
+       5. router + common-renderers (use helpers)
+       6. visualizations        (use common-renderers)
+       7. pages + tabs          (use visualizations, helpers, router)
+       8. router-patch          (wraps router)
+       9. dev-controls + espn   (use datasource + render)
+       10. init                 (kicks everything off)
+     ========================================================================== -->
+
+<!-- Layer 1: configuration & data -->
+<script src="src/config.js"></script>
+<script src="src/data.js"></script>
+
+<!-- Layer 2: data source abstraction -->
+<script src="src/datasource.js"></script>
+
+<!-- Layer 3: global state -->
+<script src="src/state.js"></script>
+
+<!-- Layer 4: UI helpers (depend on state) -->
+<script src="src/helpers.js"></script>
+
+<!-- Layer 5: router & shared renderers -->
+<script src="src/router.js"></script>
+<script src="src/common-renderers.js"></script>
+
+<!-- Layer 6: visualizations (one file per sport) -->
+<script src="src/visualizations/hockey-viz.js"></script>
+<script src="src/visualizations/basketball-viz.js"></script>
+<script src="src/visualizations/football-viz.js"></script>
+<script src="src/visualizations/baseball-viz.js"></script>
+<script src="src/visualizations/soccer-viz.js"></script>
+<script src="src/visualizations/ufc-viz.js"></script>
+
+<!-- Layer 7: pages (cross-sport) and tabs -->
+<script src="src/pages/overview.js"></script>
+<script src="src/tabs/compare.js"></script>
+<script src="src/tabs/odds.js"></script>
+<script src="src/tabs/favorites.js"></script>
+<script src="src/tabs/more.js"></script>
+
+<!-- Layer 8: router wrappers (need Compare + Favorites first) -->
+<script src="src/router-patch.js"></script>
+
+<!-- Layer 9: dev controls + ESPN integration -->
+<script src="src/dev-controls.js"></script>
+<script src="src/espn.js"></script>
+
+<!-- Layer 10: bootstrap the app -->
+<script src="src/init.js"></script>
+
+</body>
+</html>
