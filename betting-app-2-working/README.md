@@ -66,6 +66,12 @@ sports-stats-app/
     └── README.md
 ```
 
+## Prediction model
+
+With the backend on, NBA/NFL/MLB/NHL win probabilities come from an Elo model
+backtested walk-forward on real ESPN results. Method and numbers:
+`backend/model/RESULTS.md` and the root README.
+
 ## Vanilla JS, on purpose
 
 No build step. No React. No npm install (for the front-end). Open `index.html` and it works. Every script tag declares functions/variables at global scope; later scripts depend on earlier ones; `index.html` loads them in dependency order with inline comments explaining each layer.

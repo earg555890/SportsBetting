@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test",
+    "fetch-history": "node scripts/fetch-history.js",
+    "tune": "node model/tune.js",
+    "backtest": "node model/backtest.js"
   }
 }
