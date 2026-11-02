@@ -4,6 +4,9 @@
 // books with best-price highlighting; player props show a consensus O/U line.
 // Lines are derived from the mock win-probabilities for now — this is the
 // surface the backend odds proxy will feed once wired (see START_HERE.md).
+// With the backend on, NBA/NFL/MLB/NHL games carry m.model (the backend's Elo
+// model, attached in espn.js); the moneyline edge then uses that probability
+// instead of the placeholder one, and the pick is labelled "Elo model".
 // =============================================================================
 
 const ODDS_BOOK_TITLES = { kalshi: 'Kalshi', fanduel: 'FanDuel', draftkings: 'DraftKings' };
@@ -85,6 +88,10 @@ function aiRecommend(d, m){
   if (!h || !a) return null;
   const hasD = m.odds.d !== undefined;
   const candidates = [];
+  // Win % used for edges: the Elo model's when the backend supplied one, else the placeholder.
+  const mp = (!hasD && m.model) ? m.model : null;
+  const probs = mp ? { w: mp.w, l: mp.l } : m.odds;
+  const modelName = mp ? 'Elo model' : 'Model';
 
   // Best American price (+ which book) for a side, by its book prob key.
   function bestFor(probKey){
@@ -100,7 +107,7 @@ function aiRecommend(d, m){
   // --- Moneyline (real edge: model prob vs. implied price) ---
   const mlSides = hasD
     ? [{ key:'home', prob:m.odds.w, pk:'w', label:`${h.short} ML` }, { key:'draw', prob:m.odds.d, pk:'d', label:'Draw' }, { key:'away', prob:m.odds.l, pk:'l', label:`${a.short} ML` }]
-    : [{ key:'home', prob:m.odds.w, pk:'w', label:`${h.short} ML` }, { key:'away', prob:m.odds.l, pk:'l', label:`${a.short} ML` }];
+    : [{ key:'home', prob:probs.w, pk:'w', label:`${h.short} ML` }, { key:'away', prob:probs.l, pk:'l', label:`${a.short} ML` }];
   mlSides.forEach(s => {
     const bp = bestFor(s.pk);
     if (bp.price == null) return;
@@ -108,9 +115,9 @@ function aiRecommend(d, m){
     candidates.push({
       market:'moneyline', label:s.label, price:bp.price, book:bp.book,
       locator:{ market:'moneyline', rowKey:s.key, book:bp.book },
-      edge, hit: model,
+      edge, hit: model, modelProb: model, impliedProb: implied,
       factors: [
-        { lean: edge >= 0 ? 'for' : 'against', text:`Model win prob ${Math.round(model*100)}% vs. ${Math.round(implied*100)}% implied by the price (${edge >= 0 ? '+' : ''}${Math.round(edge*100)}% edge)` },
+        { lean: edge >= 0 ? 'for' : 'against', text:`${modelName} win prob ${Math.round(model*100)}% vs. ${Math.round(implied*100)}% implied by the price (${edge >= 0 ? '+' : ''}${Math.round(edge*100)}% edge)` },
         { lean:'for', text:`Best price across books is ${ODDS_BOOK_TITLES[bp.book] || bp.book} at ${oddsFmt(bp.price)}` }
       ]
     });
@@ -118,18 +125,18 @@ function aiRecommend(d, m){
 
   // --- Spread (skip 3-way soccer); favorite to cover, modest synthetic edge ---
   if (!hasD){
-    const homeFav = m.odds.w >= 50;
+    const homeFav = probs.w >= 50;
     const favKey = homeFav ? 'home' : 'away';
     const favTeam = homeFav ? h : a;
     const pts = oddsSpreadPoints(d, m);
-    const favProb = Math.max(m.odds.w, m.odds.l) / 100;
+    const favProb = Math.max(probs.w, probs.l) / 100;
     const bp = oddsBestFlat(books, oddsSpreadSeed(m, favKey));
     candidates.push({
       market:'spread', label:`${favTeam.short} -${pts}`, price:bp.price, book:bp.book,
       locator:{ market:'spread', rowKey:favKey, book:bp.book },
       edge:(favProb - 0.5) * 0.12, hit: Math.max(0.30, Math.min(0.68, favProb - 0.12)),
       factors:[
-        { lean:'for', text:`${favTeam.short} is the model favorite (~${Math.round(favProb*100)}% to win outright)` },
+        { lean:'for', text:`${favTeam.short} is the ${modelName === 'Model' ? 'model' : modelName} favorite (~${Math.round(favProb*100)}% to win outright)` },
         { lean:'against', text:`Laying -${pts} is tougher than a straight-up win` }
       ]
     });
@@ -174,8 +181,12 @@ function aiRecommend(d, m){
   return {
     pick: { market: top.market, label: top.label, price: top.price, book: top.book, locator: top.locator },
     confidence: Math.max(0.05, Math.min(0.95, top.hit)),
-    summary: aiSummary(top),
-    factors: top.factors
+    summary: aiSummary(top).replace('the model', mp ? 'the Elo model' : 'the model'),
+    factors: top.factors,
+    edge: top.edge,
+    modelProb: top.modelProb != null ? top.modelProb : null,
+    impliedProb: top.impliedProb != null ? top.impliedProb : null,
+    source: mp ? 'Elo model' : null
   };
 }
 
@@ -219,7 +230,7 @@ function aiPickBanner(key, rec){
   return `<button data-ai-open="${key}" style="width:100%; text-align:left; border:none; cursor:pointer; padding:9px 12px; display:flex; align-items:center; gap:10px; background:${confidenceColor(rec.confidence, 0.14)}; border-top:0.5px solid var(--color-border-tertiary);">
     <span style="display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50%; background:${col}; color:#fff; font-size:14px; flex-shrink:0;">🤖</span>
     <span style="flex:1; min-width:0;">
-      <span style="display:block; font-size:9px; text-transform:uppercase; letter-spacing:0.5px; color:var(--color-text-tertiary);">AI Pick · ${marketLabel}</span>
+      <span style="display:block; font-size:9px; text-transform:uppercase; letter-spacing:0.5px; color:var(--color-text-tertiary);">AI Pick · ${marketLabel}${rec.source ? ' · ' + rec.source : ''}</span>
       <span style="display:block; font-size:13px; font-weight:600; color:var(--color-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(rec.pick.label)} <span style="color:var(--color-text-secondary); font-weight:500;">${oddsFmt(rec.pick.price)}</span></span>
     </span>
     <span style="display:flex; flex-direction:column; align-items:flex-end; flex-shrink:0;">
@@ -311,6 +322,11 @@ function oddsMatchExpanded(d, m, key, rec){
   const h = d.teams[m.home], a = d.teams[m.away];
   const hasD = m.odds && m.odds.d !== undefined;
   let html = '';
+
+  // Elo model line (backend on, model league)
+  if (m.model && !hasD){
+    html += `<p style="margin:8px 0 0; font-size:11px; color:var(--color-text-secondary);">Elo model win chance: <b>${escapeHtml(a.short)} ${m.model.l}%</b> · <b>${escapeHtml(h.short)} ${m.model.w}%</b>${m.model.asOf ? ` <span style="color:var(--color-text-tertiary);">(ratings as of ${escapeHtml(m.model.asOf)})</span>` : ''}</p>`;
+  }
 
   // Moneyline
   const mlRows = hasD
@@ -497,7 +513,7 @@ function renderAiModal(){
       <div style="background:var(--color-background-primary); width:100%; max-height:80%; overflow-y:auto; border-radius:18px 18px 0 0; padding:16px 18px 22px; box-shadow:0 -6px 24px rgba(0,0,0,0.25);">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
           <div style="min-width:0;">
-            <p style="margin:0; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--color-text-tertiary);">🤖 AI Pick · ${marketLabel}</p>
+            <p style="margin:0; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--color-text-tertiary);">🤖 AI Pick · ${marketLabel}${rec.source ? ' · ' + rec.source : ''}</p>
             <p style="margin:3px 0 0; font-size:17px; font-weight:600;">${escapeHtml(rec.pick.label)} <span style="color:var(--color-text-secondary); font-weight:500;">${oddsFmt(rec.pick.price)}</span></p>
             <p style="margin:2px 0 0; font-size:11px; color:var(--color-text-tertiary);">${escapeHtml(title)}</p>
           </div>

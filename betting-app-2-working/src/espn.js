@@ -24,6 +24,12 @@ const ESPN_SPORT_MAP = {
   // shape (events containing multiple fights). Boxing also stays on mock.
 };
 
+// Leagues the backend's Elo model covers (GET /api/model/:league/predict).
+const MODEL_LEAGUES = ['nba', 'nfl', 'mlb', 'nhl'];
+// 'league|homeId|awayId|neutral' -> { w, l, source } or null (unknown team).
+// Ratings only change when the backend restarts, so one fetch per matchup.
+const modelProbCache = {};
+
 let espnTimer = null;
 let espnEnabled = false;
 // Saved snapshot of mockData to restore when ESPN mode is turned off
@@ -100,6 +106,7 @@ function espnEventToMatch(event){
         fanduel:    { w, l: 100 - w },
         draftkings: { w, l: 100 - w }
       },
+      neutral: !!comp.neutralSite,
       _espn: true
     }
   };
@@ -167,9 +174,36 @@ async function fetchAllSports(){
   return { totalGames, totalSports, failed };
 }
 
+// Attaches m.model = { w, l, source:'Elo model' } (home/away win %) to every
+// real game in a model league. Failures leave m.model unset, so the Odds tab
+// falls back to its placeholder probabilities.
+async function attachModelProbs(){
+  const jobs = [];
+  MODEL_LEAGUES.forEach(lid => {
+    const d = mockData[lid];
+    if (!d || !d.matches) return;
+    d.matches.forEach(m => {
+      if (!m._espn) return;
+      const home = m.home.replace('espn_', ''), away = m.away.replace('espn_', '');
+      const key = `${lid}|${home}|${away}|${m.neutral ? 1 : 0}`;
+      if (key in modelProbCache){ if (modelProbCache[key]) m.model = modelProbCache[key]; return; }
+      jobs.push(fetch(`${BACKEND_URL}/api/model/${lid}/predict?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}${m.neutral ? '&neutral=1' : ''}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(j => {
+          const w = j && j.homeWinProb != null ? Math.round(j.homeWinProb * 100) : null;
+          modelProbCache[key] = w == null ? null : { w, l: 100 - w, source: 'Elo model', asOf: j.ratingsAsOf };
+          if (modelProbCache[key]) m.model = modelProbCache[key];
+        })
+        .catch(() => {}));                       // network error: retry on next refresh
+    });
+  });
+  await Promise.allSettled(jobs);
+}
+
 async function refreshEspnData(){
   try {
     const { totalGames, totalSports, failed } = await fetchAllSports();
+    await attachModelProbs();
     const failNote = failed.length ? ` · ${failed.length} sport${failed.length === 1 ? '' : 's'} unavailable` : '';
     espnStatusEl.textContent = `✓ Live · ${totalGames} games across ${totalSports} sports${failNote}`;
     renderContent();

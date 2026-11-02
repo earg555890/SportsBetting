@@ -34,14 +34,24 @@
 //   GET /api/odds/:league/event/:eventId/props → player props for one game
 //
 //   :league uses the SAME ids as the front end (nba, nfl, epl, ufc, ...).
+//   Featured odds games carry a `model` field: the Elo model's win
+//   probabilities (nba, nfl, mlb, nhl; null for other leagues / unknown teams).
+//
+//   --- prediction model (Elo, see model/RESULTS.md) ---
+//   GET /api/model/:league/predict?home=&away=[&neutral=1]
+//                                              → home/away win probability
 //
 // Cache: ESPN 5s, odds featured 30s, props 60s. Odds move far slower than
 //   scores, so longer TTLs stretch the monthly quota a long way.
 // ============================================================
 
 import { createServer } from 'node:http';
+import { createModelService } from './model/service.js';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+
+// ---- Elo prediction model: ratings rebuilt from data/history-*.json at startup ----
+const model = createModelService();
 
 // ---- Secret (server-side only; never shipped to the browser) ----
 const ODDS_API_KEY = process.env.ODDS_API_KEY || '';
@@ -385,12 +395,35 @@ function mockHeaders() {
 // ODDS ROUTE HANDLERS
 // ============================================================
 
+// Adds the Elo model's probabilities to each featured-odds game (new objects;
+// the cached upstream data is never mutated).
+function withModel(league, games) {
+  if (!Array.isArray(games)) return games;
+  return games.map(g => {
+    const r = model.predict(league, g.home_team, g.away_team);
+    return {
+      ...g,
+      model: r.ok
+        ? { source: 'Elo model', home_win_prob: r.homeWinProb, away_win_prob: r.awayWinProb, ratings_as_of: r.ratingsAsOf }
+        : null
+    };
+  });
+}
+
+function handleModelPredict(league, query, res) {
+  const neutral = query.get('neutral') === '1' || query.get('neutral') === 'true';
+  const r = model.predict(league, query.get('home'), query.get('away'), neutral);
+  const { ok, status, ...body } = r;
+  res.writeHead(ok ? 200 : status, corsHeaders());
+  res.end(JSON.stringify(body));
+}
+
 async function handleOddsFeatured(league, res) {
   const sportKey = ODDS_SPORT_MAP[league];
   if (!sportKey) return sendErr(res, 404, `No odds mapping for league: ${league}`, { available: Object.keys(ODDS_SPORT_MAP) });
   if (!ODDS_API_KEY) {                                  // no key yet → mock
     res.writeHead(200, mockHeaders());
-    return res.end(JSON.stringify(mockGames(league)));
+    return res.end(JSON.stringify(withModel(league, mockGames(league))));
   }
 
   const url = `${ODDS_API_BASE}/sports/${sportKey}/odds`
@@ -399,7 +432,7 @@ async function handleOddsFeatured(league, res) {
     const { data, meta } = await fetchWithCache(url, TTL.oddsFeatured);
     logQuota(league, meta);
     res.writeHead(200, oddsCors(meta));
-    res.end(JSON.stringify(data));
+    res.end(JSON.stringify(withModel(league, data)));
   } catch (err) {
     sendUpstreamErr(res, league, err);
   }
@@ -464,7 +497,7 @@ const server = createServer(async (req, res) => {
     return res.end(JSON.stringify({ error: 'Method not allowed' }));
   }
 
-  const path = req.url.split('?')[0];
+  const [path, qs] = req.url.split('?');
 
   // --- health ---
   if (path === '/' || path === '/api/health') {
@@ -473,12 +506,18 @@ const server = createServer(async (req, res) => {
       ok: true,
       message: 'Sports backend running',
       oddsKey: ODDS_API_KEY ? 'configured' : 'missing',
-      oddsMode: ODDS_API_KEY ? 'live (The Odds API)' : 'mock (set ODDS_API_KEY for real odds)'
+      oddsMode: ODDS_API_KEY ? 'live (The Odds API)' : 'mock (set ODDS_API_KEY for real odds)',
+      models: model.leagues()
     }));
   }
 
-  // --- odds: player props for one event  /api/odds/:league/event/:eventId/props ---
+  // --- model: win probability  /api/model/:league/predict?home=&away= ---
   let m;
+  if ((m = path.match(/^\/api\/model\/([a-z0-9]+)\/predict$/))) {
+    return handleModelPredict(m[1], new URLSearchParams(qs || ''), res);
+  }
+
+  // --- odds: player props for one event  /api/odds/:league/event/:eventId/props ---
   if ((m = path.match(/^\/api\/odds\/([a-z0-9]+)\/event\/([a-z0-9]+)\/props$/))) {
     return handleOddsProps(m[1], m[2], res);
   }
@@ -520,6 +559,7 @@ server.listen(PORT, () => {
   console.log(`  Live scores (ESPN): ${Object.keys(ESPN_ENDPOINTS).join(', ')}`);
   console.log(`  Betting odds: ${ODDS_API_KEY ? 'The Odds API — key configured ✓' : 'MOCK mode (no key) — set ODDS_API_KEY for real odds'}`);
   console.log(`    odds leagues: ${Object.keys(ODDS_SPORT_MAP).join(', ')}`);
+  console.log(`  Elo model: ${model.leagues().length ? model.leagues().map(l => `${l} (as of ${model.info(l).ratingsAsOf})`).join(', ') : 'no history yet — run node scripts/fetch-history.js'}`);
   console.log(`  Try: http://localhost:${PORT}/api/odds/nba`);
   console.log(`  Press Ctrl+C to stop.\n`);
 });
